@@ -25,6 +25,23 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     'user.info.profile',
   ];
 
+  private validateEnvironmentVariables(): void {
+    const requiredVars = [
+      'TIKTOK_CLIENT_ID',
+      'TIKTOK_CLIENT_SECRET',
+      'FRONTEND_URL'
+    ];
+
+    const missingVars = requiredVars.filter(varName => !process.env[varName]);
+    
+    if (missingVars.length > 0) {
+      console.error('Missing required TikTok environment variables:', missingVars);
+      throw new Error(`Missing required TikTok environment variables: ${missingVars.join(', ')}`);
+    }
+
+    console.log('TikTok environment variables validation passed');
+  }
+
   async refreshToken(refreshToken: string): Promise<AuthTokenDetails> {
     const value = {
       client_key: process.env.TIKTOK_CLIENT_ID!,
@@ -171,13 +188,47 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
+  private async checkAccountPermissions(accessToken: string): Promise<void> {
+    try {
+      console.log('Checking TikTok account permissions...');
+      
+      const response = await this.fetch(
+        'https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name,union_id,username,profile_deep_link,is_verified,follower_count,following_count,likes_count',
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      
+      const userInfo = await response.json();
+      console.log('TikTok user info:', JSON.stringify(userInfo, null, 2));
+      
+      // Check if account is verified (optional but recommended)
+      if (userInfo.data?.user?.is_verified) {
+        console.log('TikTok account is verified');
+      } else {
+        console.log('TikTok account is not verified - this might affect upload capabilities');
+      }
+      
+      // Check follower count (optional)
+      const followerCount = userInfo.data?.user?.follower_count || 0;
+      console.log(`TikTok account has ${followerCount} followers`);
+      
+    } catch (error) {
+      console.error('Error checking TikTok account permissions:', error);
+      // Don't throw error here, just log it - this is informational only
+    }
+  }
+
   private async uploadedVideoSuccess(
     id: string,
     publishId: string,
     accessToken: string
   ): Promise<{ url: string; id: number }> {
     let attempts = 0;
-    const maxAttempts = 20; // Maximum 60 seconds (20 * 3 seconds)
+    const maxAttempts = 30; // Increased from 20 to 30 (90 seconds total)
     
     // eslint-disable-next-line no-constant-condition
     while (attempts < maxAttempts) {
@@ -201,15 +252,37 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
       const post = await response.json();
       console.log('Upload status response:', JSON.stringify(post, null, 2));
 
-      const { status, publicaly_available_post_id } = post.data;
-
-
+      const { status, publicaly_available_post_id, fail_reason, downloaded_bytes } = post.data;
 
       if (status === 'FAILED') {
         console.error('TikTok upload failed:', JSON.stringify(post, null, 2));
+        
+        // Provide more specific error messages based on fail_reason
+        let errorMessage = 'TikTok upload failed';
+        if (fail_reason === 'internal') {
+          errorMessage = 'TikTok internal processing error. This might be due to video format, size, or content restrictions.';
+        } else if (fail_reason === 'invalid_video') {
+          errorMessage = 'Video format is not supported by TikTok. Please ensure the video is in MP4 format and meets TikTok requirements.';
+        } else if (fail_reason === 'video_too_large') {
+          errorMessage = 'Video file is too large for TikTok. Please reduce the video size.';
+        } else if (fail_reason === 'download_failed') {
+          errorMessage = 'TikTok could not download the video from the provided URL. Please ensure the URL is publicly accessible.';
+        } else if (fail_reason) {
+          errorMessage = `TikTok upload failed: ${fail_reason}`;
+        }
+        
+        // Log additional diagnostic information
+        console.error('TikTok upload diagnostic info:', {
+          fail_reason,
+          downloaded_bytes,
+          publish_id: publishId,
+          timestamp: new Date().toISOString(),
+          user_agent: 'TikTokBot/1.0'
+        });
+        
         throw new BadBody(
           'tiktok-error-upload',
-          JSON.stringify(post),
+          errorMessage,
           Buffer.from(JSON.stringify(post))
         );
       }
@@ -227,6 +300,11 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
         };
       }
 
+      // Log progress for better debugging
+      if (downloaded_bytes > 0) {
+        console.log(`Download progress: ${downloaded_bytes} bytes downloaded`);
+      }
+      
       console.log(`Upload status: ${status}, waiting 3 seconds before next check...`);
       await timer(3000);
     }
@@ -234,7 +312,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     // If we reach here, we've exceeded max attempts
     throw new BadBody(
       'tiktok-error-upload',
-      `Upload timeout after ${maxAttempts} attempts`,
+      `Upload timeout after ${maxAttempts} attempts (${maxAttempts * 3} seconds). The video may be too large or TikTok servers are experiencing issues.`,
       Buffer.from(`Upload timeout after ${maxAttempts} attempts`)
     );
   }
@@ -252,6 +330,117 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     }
   }
 
+  private async validateVideoForTikTok(videoUrl: string): Promise<void> {
+    try {
+      // Check if URL is accessible
+      const response = await fetch(videoUrl, { 
+        method: 'HEAD',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; TikTokBot/1.0)'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Video URL not accessible: ${response.status} ${response.statusText}`);
+      }
+
+      // Check content type
+      const contentType = response.headers.get('content-type');
+      if (contentType && !contentType.includes('video/') && !contentType.includes('application/octet-stream')) {
+        console.warn(`Warning: Content type may not be video: ${contentType}`);
+      }
+
+      // Check file size
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        const sizeInMB = parseInt(contentLength) / (1024 * 1024);
+        console.log(`Video size: ${sizeInMB.toFixed(2)} MB`);
+        
+        // TikTok recommended limits
+        if (parseInt(contentLength) > 4 * 1024 * 1024 * 1024) { // 4GB
+          throw new Error(`Video file is too large (${sizeInMB.toFixed(2)} MB). TikTok maximum is 4GB.`);
+        }
+        
+        if (parseInt(contentLength) < 1024 * 1024) { // 1MB
+          console.warn(`Video file seems very small (${sizeInMB.toFixed(2)} MB). This might cause issues.`);
+        }
+      }
+
+      // Check if URL is HTTPS (TikTok requires secure URLs)
+      if (!videoUrl.startsWith('https://')) {
+        throw new Error('Video URL must use HTTPS protocol for TikTok uploads.');
+      }
+
+      // Check if URL is publicly accessible (basic check)
+      if (videoUrl.includes('localhost') || videoUrl.includes('127.0.0.1')) {
+        throw new Error('Video URL must be publicly accessible. Local URLs are not supported.');
+      }
+
+    } catch (error) {
+      console.error('Video validation failed:', error);
+      throw error;
+    }
+  }
+
+  private async checkVideoDuration(videoUrl: string, accessToken: string): Promise<void> {
+    try {
+      // Get max video length from TikTok API
+      const { maxDurationSeconds } = await this.maxVideoLength(accessToken);
+      console.log(`TikTok max video duration: ${maxDurationSeconds} seconds`);
+      
+      // Note: We can't easily check video duration from URL without downloading
+      // This is just for logging purposes - actual duration check should be done on frontend
+      console.log('Video duration check: Please ensure video is within TikTok limits on frontend');
+      
+    } catch (error) {
+      console.error('Error checking video duration limits:', error);
+      // Don't throw error here, just log it
+    }
+  }
+
+  private checkContentRestrictions(postDetails: PostDetails<TikTokDto>): void {
+    const message = postDetails.message || '';
+    const title = postDetails.settings?.title || '';
+    
+    // Check for potentially problematic content
+    const problematicKeywords = [
+      'spam', 'scam', 'fake', 'clickbait', 'buy now', 'limited time',
+      'free money', 'get rich quick', 'crypto', 'bitcoin', 'investment',
+      'weight loss', 'diet pill', 'miracle cure', 'medical breakthrough'
+    ];
+    
+    const allText = `${message} ${title}`.toLowerCase();
+    const foundKeywords = problematicKeywords.filter(keyword => 
+      allText.includes(keyword.toLowerCase())
+    );
+    
+    if (foundKeywords.length > 0) {
+      console.warn('Potential content restrictions detected:', foundKeywords);
+      console.warn('TikTok may reject content containing these keywords');
+    }
+    
+    // Check for excessive hashtags or mentions
+    const hashtagCount = (message.match(/#/g) || []).length;
+    const mentionCount = (message.match(/@/g) || []).length;
+    
+    if (hashtagCount > 20) {
+      console.warn(`Too many hashtags (${hashtagCount}). TikTok recommends max 20 hashtags.`);
+    }
+    
+    if (mentionCount > 5) {
+      console.warn(`Too many mentions (${mentionCount}). This might affect video processing.`);
+    }
+    
+    // Check for very short or very long text
+    if (message.length < 5) {
+      console.warn('Very short description. Consider adding more context.');
+    }
+    
+    if (message.length > 2000) {
+      console.warn('Description is very long. TikTok has character limits.');
+    }
+  }
+
   async post(
     id: string,
     accessToken: string,
@@ -262,28 +451,29 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
 
     console.log('TikTok post details:', JSON.stringify(firstPost, null, 2));
     
-    // Validate video URL
+    // Validate environment variables first
+    this.validateEnvironmentVariables();
+    
+    // Check account permissions first
+    await this.checkAccountPermissions(accessToken);
+    
+    // Check content restrictions
+    this.checkContentRestrictions(firstPost);
+    
+    // Validate video URL and format
     if (firstPost?.media?.[0]?.path) {
       try {
-        console.log('Checking video URL accessibility:', firstPost.media[0].path);
-        const urlCheck = await fetch(firstPost.media[0].path, { 
-          method: 'HEAD',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; TikTokBot/1.0)'
-          }
-        });
-        console.log('Video URL check status:', urlCheck.status, urlCheck.statusText);
-        if (!urlCheck.ok) {
-          throw new BadBody(
-            'tiktok-error-upload',
-            `Video URL is not accessible (${urlCheck.status}): ${firstPost.media[0].path}`,
-            Buffer.from(`Video URL is not accessible (${urlCheck.status}): ${firstPost.media[0].path}`)
-          );
-        }
+        console.log('Validating video for TikTok upload:', firstPost.media[0].path);
+        await this.validateVideoForTikTok(firstPost.media[0].path);
+        await this.checkVideoDuration(firstPost.media[0].path, accessToken);
+        console.log('Video validation passed');
       } catch (error) {
-        console.error('Error checking video URL:', error);
-        // Don't throw error here, just log it - TikTok might still be able to access the URL
-        console.warn('Video URL validation failed, but continuing with upload');
+        console.error('Video validation failed:', error);
+        throw new BadBody(
+          'tiktok-error-upload',
+          `Video validation failed: ${error.message}`,
+          Buffer.from(`Video validation failed: ${error.message}`)
+        );
       }
     }
     const requestBody = {
@@ -344,17 +534,52 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     
     console.log('TikTok API URL:', apiUrl);
     
-    const response = await this.fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=UTF-8',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    // Add retry mechanism for the upload request
+    let uploadAttempts = 0;
+    const maxUploadAttempts = 3;
+    let responseData;
     
-    const responseData = await response.json();
-    console.log('TikTok API response:', JSON.stringify(responseData, null, 2));
+    while (uploadAttempts < maxUploadAttempts) {
+      try {
+        uploadAttempts++;
+        console.log(`Upload attempt ${uploadAttempts}/${maxUploadAttempts}`);
+        
+        const response = await this.fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+        
+        responseData = await response.json();
+        console.log('TikTok API response:', JSON.stringify(responseData, null, 2));
+        
+        // Check if the response indicates an error
+        if (responseData.error && responseData.error.code !== 'ok') {
+          throw new Error(`TikTok API error: ${responseData.error.message || 'Unknown error'}`);
+        }
+        
+        // If we get here, the upload was successful
+        break;
+        
+      } catch (error) {
+        console.error(`Upload attempt ${uploadAttempts} failed:`, error);
+        
+        if (uploadAttempts >= maxUploadAttempts) {
+          throw new BadBody(
+            'tiktok-error-upload',
+            `Failed to initiate video upload after ${maxUploadAttempts} attempts: ${error.message}`,
+            Buffer.from(error.message)
+          );
+        }
+        
+        // Wait before retrying
+        console.log(`Waiting 5 seconds before retry...`);
+        await timer(5000);
+      }
+    }
     
     const {
       data: { publish_id },

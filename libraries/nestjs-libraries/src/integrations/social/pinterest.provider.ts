@@ -10,7 +10,7 @@ import { PinterestSettingsDto } from '@gitroom/nestjs-libraries/dtos/posts/provi
 import axios from 'axios';
 import FormData from 'form-data';
 import { timer } from '@gitroom/helpers/utils/timer';
-import { SocialAbstract } from '@gitroom/nestjs-libraries/integrations/social.abstract';
+import { SocialAbstract, RefreshToken } from '@gitroom/nestjs-libraries/integrations/social.abstract';
 import dayjs from 'dayjs';
 
 export class PinterestProvider
@@ -269,7 +269,38 @@ export class PinterestProvider
       ];
     } catch (err) {
       console.log(err);
-      return [];
+      
+      // Check if it's an authentication error
+      if (err && typeof err === 'object' && 'code' in err && err.code === 2) {
+        throw new RefreshToken(
+          'pinterest',
+          JSON.stringify(err),
+          JSON.stringify({
+            link: postDetails?.[0]?.settings.link,
+            title: postDetails?.[0]?.settings.title,
+            description: postDetails?.[0]?.message,
+            dominant_color: postDetails?.[0]?.settings.dominant_color,
+            board_id: postDetails?.[0]?.settings.board,
+            media_source: mediaId
+              ? {
+                  source_type: 'video_id',
+                  media_id: mediaId,
+                  cover_image_url: picture?.path,
+                }
+              : mapImages?.length === 1
+              ? {
+                  source_type: 'image_url',
+                  url: mapImages?.[0]?.path,
+                }
+              : {
+                  source_type: 'multiple_image_urls',
+                  items: mapImages,
+                },
+          })
+        );
+      }
+      
+      throw err;
     }
   }
 
