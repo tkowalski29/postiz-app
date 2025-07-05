@@ -28,9 +28,16 @@ export class PinterestProvider
     'user_accounts:read',
   ];
 
+  // Get API base URL based on environment
+  private getApiBaseUrl(): string {
+    return 'https://api-sandbox.pinterest.com';
+    // return 'https://api.pinterest.com';
+  }
+
   async refreshToken(refreshToken: string): Promise<AuthTokenDetails> {
+    const apiBaseUrl = this.getApiBaseUrl();
     const { access_token, expires_in } = await (
-      await this.fetch('https://api.pinterest.com/v5/oauth/token', {
+      await this.fetch(`${apiBaseUrl}/v5/oauth/token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -48,7 +55,7 @@ export class PinterestProvider
     ).json();
 
     const { id, profile_image, username } = await (
-      await this.fetch('https://api.pinterest.com/v5/user_account', {
+      await this.fetch(`${apiBaseUrl}/v5/user_account`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -87,8 +94,9 @@ export class PinterestProvider
     codeVerifier: string;
     refresh: string;
   }) {
+    const apiBaseUrl = this.getApiBaseUrl();
     const { access_token, refresh_token, expires_in, scope } = await (
-      await this.fetch('https://api.pinterest.com/v5/oauth/token', {
+      await this.fetch(`${apiBaseUrl}/v5/oauth/token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -107,7 +115,7 @@ export class PinterestProvider
     this.checkScopes(this.scopes, scope);
 
     const { id, profile_image, username } = await (
-      await this.fetch('https://api.pinterest.com/v5/user_account', {
+      await this.fetch(`${apiBaseUrl}/v5/user_account`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -127,8 +135,9 @@ export class PinterestProvider
   }
 
   async boards(accessToken: string) {
+    const apiBaseUrl = this.getApiBaseUrl();
     const { items } = await (
-      await this.fetch('https://api.pinterest.com/v5/boards', {
+      await this.fetch(`${apiBaseUrl}/v5/boards`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -149,6 +158,7 @@ export class PinterestProvider
     accessToken: string,
     postDetails: PostDetails<PinterestSettingsDto>[]
   ): Promise<PostResponse[]> {
+    const apiBaseUrl = this.getApiBaseUrl();
     let mediaId = '';
     const findMp4 = postDetails?.[0]?.media?.find(
       (p) => (p.path?.indexOf('mp4') || -1) > -1
@@ -159,7 +169,7 @@ export class PinterestProvider
 
     if (findMp4) {
       const { upload_url, media_id, upload_parameters } = await (
-        await this.fetch('https://api.pinterest.com/v5/media', {
+        await this.fetch(`${apiBaseUrl}/v5/media`, {
           method: 'POST',
           body: JSON.stringify({
             media_type: 'video',
@@ -191,7 +201,7 @@ export class PinterestProvider
       let statusCode = '';
       while (statusCode !== 'succeeded') {
         const mediafile = await (
-          await this.fetch('https://api.pinterest.com/v5/media/' + media_id, {
+          await this.fetch(`${apiBaseUrl}/v5/media/${media_id}`, {
             method: 'GET',
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -212,7 +222,7 @@ export class PinterestProvider
 
     try {
       const { id: pId } = await (
-        await this.fetch('https://api.pinterest.com/v5/pins', {
+        await this.fetch(`${apiBaseUrl}/v5/pins`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -268,6 +278,7 @@ export class PinterestProvider
     accessToken: string,
     date: number
   ): Promise<AnalyticsData[]> {
+    const apiBaseUrl = this.getApiBaseUrl();
     const until = dayjs().format('YYYY-MM-DD');
     const since = dayjs().subtract(date, 'day').format('YYYY-MM-DD');
 
@@ -275,7 +286,7 @@ export class PinterestProvider
       all: { daily_metrics },
     } = await (
       await this.fetch(
-        `https://api.pinterest.com/v5/user_account/analytics?start_date=${since}&end_date=${until}`,
+        `${apiBaseUrl}/v5/user_account/analytics?start_date=${since}&end_date=${until}`,
         {
           method: 'GET',
           headers: {

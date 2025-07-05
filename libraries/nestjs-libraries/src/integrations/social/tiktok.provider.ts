@@ -176,27 +176,46 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     publishId: string,
     accessToken: string
   ): Promise<{ url: string; id: number }> {
+    let attempts = 0;
+    const maxAttempts = 20; // Maximum 60 seconds (20 * 3 seconds)
+    
     // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const post = await (
-        await this.fetch(
-          'https://open.tiktokapis.com/v2/post/publish/status/fetch/',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json; charset=UTF-8',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              publish_id: publishId,
-            }),
-          }
-        )
-      ).json();
+    while (attempts < maxAttempts) {
+      attempts++;
+      console.log(`Checking upload status (attempt ${attempts}/${maxAttempts}) for publish_id: ${publishId}`);
+      
+      const response = await this.fetch(
+        'https://open.tiktokapis.com/v2/post/publish/status/fetch/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            publish_id: publishId,
+          }),
+        }
+      );
+      
+      const post = await response.json();
+      console.log('Upload status response:', JSON.stringify(post, null, 2));
 
       const { status, publicaly_available_post_id } = post.data;
 
+
+
+      if (status === 'FAILED') {
+        console.error('TikTok upload failed:', JSON.stringify(post, null, 2));
+        throw new BadBody(
+          'tiktok-error-upload',
+          JSON.stringify(post),
+          Buffer.from(JSON.stringify(post))
+        );
+      }
+
       if (status === 'PUBLISH_COMPLETE') {
+        console.log('TikTok upload completed successfully');
         return {
           url: !publicaly_available_post_id
             ? `https://www.tiktok.com/@${id}`
@@ -208,16 +227,16 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
         };
       }
 
-      if (status === 'FAILED') {
-        throw new BadBody(
-          'titok-error-upload',
-          JSON.stringify(post),
-          Buffer.from(JSON.stringify(post))
-        );
-      }
-
+      console.log(`Upload status: ${status}, waiting 3 seconds before next check...`);
       await timer(3000);
     }
+    
+    // If we reach here, we've exceeded max attempts
+    throw new BadBody(
+      'tiktok-error-upload',
+      `Upload timeout after ${maxAttempts} attempts`,
+      Buffer.from(`Upload timeout after ${maxAttempts} attempts`)
+    );
   }
 
   private postingMethod(
@@ -241,72 +260,105 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
   ): Promise<PostResponse[]> {
     const [firstPost, ...comments] = postDetails;
 
-    console.log(firstPost);
+    console.log('TikTok post details:', JSON.stringify(firstPost, null, 2));
+    
+    // Validate video URL
+    if (firstPost?.media?.[0]?.path) {
+      try {
+        console.log('Checking video URL accessibility:', firstPost.media[0].path);
+        const urlCheck = await fetch(firstPost.media[0].path, { 
+          method: 'HEAD',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; TikTokBot/1.0)'
+          }
+        });
+        console.log('Video URL check status:', urlCheck.status, urlCheck.statusText);
+        if (!urlCheck.ok) {
+          throw new BadBody(
+            'tiktok-error-upload',
+            `Video URL is not accessible (${urlCheck.status}): ${firstPost.media[0].path}`,
+            Buffer.from(`Video URL is not accessible (${urlCheck.status}): ${firstPost.media[0].path}`)
+          );
+        }
+      } catch (error) {
+        console.error('Error checking video URL:', error);
+        // Don't throw error here, just log it - TikTok might still be able to access the URL
+        console.warn('Video URL validation failed, but continuing with upload');
+      }
+    }
+    const requestBody = {
+      ...((firstPost?.settings?.content_posting_method ||
+        'DIRECT_POST') === 'DIRECT_POST'
+        ? {
+            post_info: {
+              title: firstPost.message || '',
+              privacy_level:
+                firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
+              disable_duet: !firstPost.settings.duet || false,
+              disable_comment: !firstPost.settings.comment || false,
+              disable_stitch: !firstPost.settings.stitch || false,
+              brand_content_toggle:
+                firstPost.settings.brand_content_toggle || false,
+              brand_organic_toggle:
+                firstPost.settings.brand_organic_toggle || false,
+              ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
+              -1
+                ? {
+                    auto_add_music:
+                      firstPost.settings.autoAddMusic === 'yes',
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) > -1
+        ? {
+            source_info: {
+              source: 'PULL_FROM_URL',
+              video_url: firstPost?.media?.[0]?.path!,
+              ...(firstPost?.media?.[0]?.thumbnailTimestamp!
+                ? {
+                    video_cover_timestamp_ms:
+                      firstPost?.media?.[0]?.thumbnailTimestamp!,
+                  }
+                : {}),
+            },
+          }
+        : {
+            source_info: {
+              source: 'PULL_FROM_URL',
+              photo_cover_index: 0,
+              photo_images: firstPost.media?.map((p) => p.path),
+            },
+            post_mode: 'DIRECT_POST',
+            media_type: 'PHOTO',
+          }),
+    };
+
+    console.log('TikTok API request body:', JSON.stringify(requestBody, null, 2));
+
+    const apiUrl = `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
+      firstPost.settings.content_posting_method,
+      (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
+    )}`;
+    
+    console.log('TikTok API URL:', apiUrl);
+    
+    const response = await this.fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    const responseData = await response.json();
+    console.log('TikTok API response:', JSON.stringify(responseData, null, 2));
+    
     const {
       data: { publish_id },
-    } = await (
-      await this.fetch(
-        `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
-          firstPost.settings.content_posting_method,
-          (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
-        )}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json; charset=UTF-8',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            ...((firstPost?.settings?.content_posting_method ||
-              'DIRECT_POST') === 'DIRECT_POST'
-              ? {
-                  post_info: {
-                    title: firstPost.message,
-                    privacy_level:
-                      firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
-                    disable_duet: !firstPost.settings.duet || false,
-                    disable_comment: !firstPost.settings.comment || false,
-                    disable_stitch: !firstPost.settings.stitch || false,
-                    brand_content_toggle:
-                      firstPost.settings.brand_content_toggle || false,
-                    brand_organic_toggle:
-                      firstPost.settings.brand_organic_toggle || false,
-                    ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
-                    -1
-                      ? {
-                          auto_add_music:
-                            firstPost.settings.autoAddMusic === 'yes',
-                        }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) > -1
-              ? {
-                  source_info: {
-                    source: 'PULL_FROM_URL',
-                    video_url: firstPost?.media?.[0]?.path!,
-                    ...(firstPost?.media?.[0]?.thumbnailTimestamp!
-                      ? {
-                          video_cover_timestamp_ms:
-                            firstPost?.media?.[0]?.thumbnailTimestamp!,
-                        }
-                      : {}),
-                  },
-                }
-              : {
-                  source_info: {
-                    source: 'PULL_FROM_URL',
-                    photo_cover_index: 0,
-                    photo_images: firstPost.media?.map((p) => p.path),
-                  },
-                  post_mode: 'DIRECT_POST',
-                  media_type: 'PHOTO',
-                }),
-          }),
-        }
-      )
-    ).json();
+    } = responseData;
 
     const { url, id: videoId } = await this.uploadedVideoSuccess(
       integration.profile!,
