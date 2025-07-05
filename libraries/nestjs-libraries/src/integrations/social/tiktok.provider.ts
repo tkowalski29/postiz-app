@@ -400,7 +400,6 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
 
   private checkContentRestrictions(postDetails: PostDetails<TikTokDto>): void {
     const message = postDetails.message || '';
-    const title = postDetails.settings?.title || '';
     
     // Check for potentially problematic content
     const problematicKeywords = [
@@ -409,7 +408,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
       'weight loss', 'diet pill', 'miracle cure', 'medical breakthrough'
     ];
     
-    const allText = `${message} ${title}`.toLowerCase();
+    const allText = message.toLowerCase();
     const foundKeywords = problematicKeywords.filter(keyword => 
       allText.includes(keyword.toLowerCase())
     );
@@ -469,10 +468,11 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
         console.log('Video validation passed');
       } catch (error) {
         console.error('Video validation failed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown validation error';
         throw new BadBody(
           'tiktok-error-upload',
-          `Video validation failed: ${error.message}`,
-          Buffer.from(`Video validation failed: ${error.message}`)
+          `Video validation failed: ${errorMessage}`,
+          Buffer.from(`Video validation failed: ${errorMessage}`)
         );
       }
     }
@@ -568,10 +568,11 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
         console.error(`Upload attempt ${uploadAttempts} failed:`, error);
         
         if (uploadAttempts >= maxUploadAttempts) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown upload error';
           throw new BadBody(
             'tiktok-error-upload',
-            `Failed to initiate video upload after ${maxUploadAttempts} attempts: ${error.message}`,
-            Buffer.from(error.message)
+            `Failed to initiate video upload after ${maxUploadAttempts} attempts: ${errorMessage}`,
+            Buffer.from(errorMessage)
           );
         }
         
