@@ -4,7 +4,7 @@ pipeline {
     environment {
         NODE_VERSION = '20.17.0'
         PR_NUMBER = "${env.CHANGE_ID}" // PR number comes from webhook payload
-        IMAGE_TAG="ghcr.io/gitroomhq/postiz-app-pr:${env.CHANGE_ID}"
+        IMAGE_TAG="ghcr.io/tkowalski29/postiz-app-pr:${env.CHANGE_ID}"
     }
 
     stages {
