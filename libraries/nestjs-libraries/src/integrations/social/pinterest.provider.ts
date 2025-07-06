@@ -30,8 +30,12 @@ export class PinterestProvider
 
   // Get API base URL based on environment
   private getApiBaseUrl(): string {
+    return 'https://api.pinterest.com';
+  }
+
+  // Get API base URL for posting (uses sandbox for testing)
+  private getPostApiBaseUrl(): string {
     return 'https://api-sandbox.pinterest.com';
-    // return 'https://api.pinterest.com';
   }
 
   async refreshToken(refreshToken: string): Promise<AuthTokenDetails> {
@@ -158,7 +162,7 @@ export class PinterestProvider
     accessToken: string,
     postDetails: PostDetails<PinterestSettingsDto>[]
   ): Promise<PostResponse[]> {
-    const apiBaseUrl = this.getApiBaseUrl();
+    const apiBaseUrl = this.getPostApiBaseUrl();
     let mediaId = '';
     const findMp4 = postDetails?.[0]?.media?.find(
       (p) => (p.path?.indexOf('mp4') || -1) > -1
@@ -270,8 +274,18 @@ export class PinterestProvider
     } catch (err) {
       console.log(err);
       
-      // Check if it's an authentication error
-      if (err && typeof err === 'object' && 'code' in err && err.code === 2) {
+      // Check if it's an authentication error - improved error detection
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorCode = (err as any)?.code;
+      
+      if (
+        errorCode === 2 || 
+        errorCode === 283 ||
+        errorMessage.includes('Authentication failed') ||
+        errorMessage.includes('authorization grant is invalid') ||
+        errorMessage.includes('OAuthException') ||
+        (err as any)?.status === 401
+      ) {
         throw new RefreshToken(
           'pinterest',
           JSON.stringify(err),
