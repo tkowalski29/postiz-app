@@ -242,6 +242,54 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     const [firstPost, ...comments] = postDetails;
 
     console.log(firstPost);
+    var body = JSON.stringify({
+      ...((firstPost?.settings?.content_posting_method ||
+        'DIRECT_POST') === 'DIRECT_POST'
+        ? {
+            post_info: {
+              title: firstPost.message,
+              privacy_level:
+                firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
+              disable_duet: !firstPost.settings.duet || false,
+              disable_comment: !firstPost.settings.comment || false,
+              disable_stitch: !firstPost.settings.stitch || false,
+              brand_content_toggle:
+                firstPost.settings.brand_content_toggle || false,
+              brand_organic_toggle:
+                firstPost.settings.brand_organic_toggle || false,
+              ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
+              -1
+                ? {
+                    auto_add_music:
+                      firstPost.settings.autoAddMusic === 'yes',
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) > -1
+        ? {
+            source_info: {
+              source: 'PULL_FROM_URL',
+              video_url: firstPost?.media?.[0]?.path!,
+              ...(firstPost?.media?.[0]?.thumbnailTimestamp!
+                ? {
+                    video_cover_timestamp_ms:
+                      firstPost?.media?.[0]?.thumbnailTimestamp!,
+                  }
+                : {}),
+            },
+          }
+        : {
+            source_info: {
+              source: 'PULL_FROM_URL',
+              photo_cover_index: 0,
+              photo_images: firstPost.media?.map((p) => p.path),
+            },
+            post_mode: 'DIRECT_POST',
+            media_type: 'PHOTO',
+          }),
+    })
     const {
       data: { publish_id },
     } = await (
@@ -256,57 +304,18 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
             'Content-Type': 'application/json; charset=UTF-8',
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({
-            ...((firstPost?.settings?.content_posting_method ||
-              'DIRECT_POST') === 'DIRECT_POST'
-              ? {
-                  post_info: {
-                    title: firstPost.message,
-                    privacy_level:
-                      firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
-                    disable_duet: !firstPost.settings.duet || false,
-                    disable_comment: !firstPost.settings.comment || false,
-                    disable_stitch: !firstPost.settings.stitch || false,
-                    brand_content_toggle:
-                      firstPost.settings.brand_content_toggle || false,
-                    brand_organic_toggle:
-                      firstPost.settings.brand_organic_toggle || false,
-                    ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
-                    -1
-                      ? {
-                          auto_add_music:
-                            firstPost.settings.autoAddMusic === 'yes',
-                        }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) > -1
-              ? {
-                  source_info: {
-                    source: 'PULL_FROM_URL',
-                    video_url: firstPost?.media?.[0]?.path!,
-                    ...(firstPost?.media?.[0]?.thumbnailTimestamp!
-                      ? {
-                          video_cover_timestamp_ms:
-                            firstPost?.media?.[0]?.thumbnailTimestamp!,
-                        }
-                      : {}),
-                  },
-                }
-              : {
-                  source_info: {
-                    source: 'PULL_FROM_URL',
-                    photo_cover_index: 0,
-                    photo_images: firstPost.media?.map((p) => p.path),
-                  },
-                  post_mode: 'DIRECT_POST',
-                  media_type: 'PHOTO',
-                }),
-          }),
+          body: body,
         }
       )
     ).json();
+
+    console.log('publish_id');
+    console.log( `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
+      firstPost.settings.content_posting_method,
+      (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
+    )}`)
+    console.log(body);
+    console.log(publish_id);
 
     const { url, id: videoId } = await this.uploadedVideoSuccess(
       integration.profile!,
