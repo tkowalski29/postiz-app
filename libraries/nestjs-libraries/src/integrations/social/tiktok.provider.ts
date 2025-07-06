@@ -176,23 +176,30 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     publishId: string,
     accessToken: string
   ): Promise<{ url: string; id: number }> {
+    await timer(6000);
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const post = await (
-        await this.fetch(
-          'https://open.tiktokapis.com/v2/post/publish/status/fetch/',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json; charset=UTF-8',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              publish_id: publishId,
-            }),
-          }
-        )
-      ).json();
+      const fetchResponse = await this.fetch(
+        'https://open.tiktokapis.com/v2/post/publish/status/fetch/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            publish_id: publishId,
+          }),
+        }
+      );
+
+      console.log('Status fetch HTTP status:', fetchResponse.status);
+      console.log('Status fetch headers:', Object.fromEntries(fetchResponse.headers.entries()));
+
+      const post = await fetchResponse.json();
+
+      console.log('Status fetch response body:');
+      console.log(JSON.stringify(post, null, 2));
 
       const { status, publicaly_available_post_id } = post.data;
 
@@ -290,9 +297,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
             media_type: 'PHOTO',
           }),
     })
-    const {
-      data: { publish_id },
-    } = await (
+    const response = await (
       await this.fetch(
         `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
           firstPost.settings.content_posting_method,
@@ -309,13 +314,15 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
       )
     ).json();
 
-    console.log('publish_id');
+    console.log('Full response:');
     console.log( `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
       firstPost.settings.content_posting_method,
       (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
     )}`)
     console.log(body);
-    console.log(publish_id);
+    console.log(JSON.stringify(response, null, 2));
+
+    const { publish_id } = response.data;
 
     const { url, id: videoId } = await this.uploadedVideoSuccess(
       integration.profile!,
