@@ -194,7 +194,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
       );
 
       console.log('Status fetch HTTP status:', fetchResponse.status);
-      console.log('Status fetch headers:', Object.fromEntries(fetchResponse.headers.entries()));
+      console.log('Status fetch headers:', Object.fromEntries(Array.from(fetchResponse.headers.entries())));
 
       const post = await fetchResponse.json();
 
@@ -270,10 +270,11 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
         }
       } catch (error) {
         console.error('Error checking video URL accessibility:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         throw new BadBody(
           'tiktok-video-url-error',
-          `Error checking video URL: ${error.message}`,
-          Buffer.from(`Error checking video URL: ${error.message}`)
+          `Error checking video URL: ${errorMessage}`,
+          Buffer.from(`Error checking video URL: ${errorMessage}`)
         );
       }
     }
