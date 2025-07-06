@@ -191,7 +191,7 @@ export class PinterestProvider
       let statusCode = '';
       while (statusCode !== 'succeeded') {
         const mediafile = await (
-          await this.fetch('https://api.pinterest.com/v5/media/' + media_id, {
+          await this.fetch('https://api-sandbox.pinterest.com/v5/media/' + media_id, {
             method: 'GET',
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -212,7 +212,7 @@ export class PinterestProvider
 
     try {
       const { id: pId } = await (
-        await this.fetch('https://api.pinterest.com/v5/pins', {
+        await this.fetch('https://api-sandbox.pinterest.com/v5/pins', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
