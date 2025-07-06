@@ -249,31 +249,54 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     const [firstPost, ...comments] = postDetails;
 
     console.log(firstPost);
+    
+    // Check if video URL is accessible
+    if (firstPost?.media?.[0]?.path?.indexOf('mp4') > -1) {
+      try {
+        const videoResponse = await fetch(firstPost.media[0].path, { method: 'HEAD' });
+        console.log('Video URL accessibility check:', {
+          url: firstPost.media[0].path,
+          status: videoResponse.status,
+          contentType: videoResponse.headers.get('content-type'),
+          contentLength: videoResponse.headers.get('content-length')
+        });
+        
+        if (!videoResponse.ok) {
+          throw new BadBody(
+            'tiktok-video-url-inaccessible',
+            `Video URL is not accessible: ${videoResponse.status} ${videoResponse.statusText}`,
+            Buffer.from(`Video URL is not accessible: ${videoResponse.status} ${videoResponse.statusText}`)
+          );
+        }
+      } catch (error) {
+        console.error('Error checking video URL accessibility:', error);
+        throw new BadBody(
+          'tiktok-video-url-error',
+          `Error checking video URL: ${error.message}`,
+          Buffer.from(`Error checking video URL: ${error.message}`)
+        );
+      }
+    }
     var body = JSON.stringify({
-      ...((firstPost?.settings?.content_posting_method ||
-        'DIRECT_POST') === 'DIRECT_POST'
-        ? {
-            post_info: {
-              title: firstPost.message,
-              privacy_level:
-                firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
-              disable_duet: !firstPost.settings.duet || false,
-              disable_comment: !firstPost.settings.comment || false,
-              disable_stitch: !firstPost.settings.stitch || false,
-              brand_content_toggle:
-                firstPost.settings.brand_content_toggle || false,
-              brand_organic_toggle:
-                firstPost.settings.brand_organic_toggle || false,
-              ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
-              -1
-                ? {
-                    auto_add_music:
-                      firstPost.settings.autoAddMusic === 'yes',
-                  }
-                : {}),
-            },
-          }
-        : {}),
+      post_info: {
+        title: firstPost.message,
+        privacy_level:
+          firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
+        disable_duet: !firstPost.settings.duet || false,
+        disable_comment: !firstPost.settings.comment || false,
+        disable_stitch: !firstPost.settings.stitch || false,
+        brand_content_toggle:
+          firstPost.settings.brand_content_toggle || false,
+        brand_organic_toggle:
+          firstPost.settings.brand_organic_toggle || false,
+        ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) ===
+        -1
+          ? {
+              auto_add_music:
+                firstPost.settings.autoAddMusic === 'yes',
+            }
+          : {}),
+      },
       ...((firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) > -1
         ? {
             source_info: {
@@ -286,6 +309,8 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
                   }
                 : {}),
             },
+            post_mode: 'DIRECT_POST',
+            media_type: 'VIDEO',
           }
         : {
             source_info: {
@@ -300,7 +325,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     const response = await (
       await this.fetch(
         `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
-          firstPost.settings.content_posting_method,
+          'DIRECT_POST', // Force DIRECT_POST for now to test
           (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
         )}`,
         {
@@ -316,9 +341,12 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
 
     console.log('Full response:');
     console.log( `https://open.tiktokapis.com/v2/post/publish${this.postingMethod(
-      firstPost.settings.content_posting_method,
+      'DIRECT_POST', // Force DIRECT_POST for now to test
       (firstPost?.media?.[0]?.path?.indexOf('mp4') || -1) === -1
     )}`)
+    console.log('Video URL:', firstPost?.media?.[0]?.path);
+    console.log('Content posting method:', firstPost.settings.content_posting_method);
+    console.log('Forced method:', 'DIRECT_POST');
     console.log(body);
     console.log(JSON.stringify(response, null, 2));
 
