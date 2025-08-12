@@ -49,8 +49,9 @@ export class PinterestProvider
   }
 
   async refreshToken(refreshToken: string): Promise<AuthTokenDetails> {
+    console.log('[Pinterest] Refreshing token with sandbox URL');
     const { access_token, expires_in } = await (
-      await fetch('https://api.pinterest.com/v5/oauth/token', {
+      await fetch('https://api-sandbox.pinterest.com/v5/oauth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -67,8 +68,9 @@ export class PinterestProvider
       })
     ).json();
 
+    console.log('[Pinterest] Getting user account info from sandbox after token refresh');
     const { id, profile_image, username } = await (
-      await fetch('https://api.pinterest.com/v5/user_account', {
+      await fetch('https://api-sandbox.pinterest.com/v5/user_account', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -107,8 +109,9 @@ export class PinterestProvider
     codeVerifier: string;
     refresh: string;
   }) {
+    console.log('[Pinterest] Authenticating with sandbox URL');
     const { access_token, refresh_token, expires_in, scope } = await (
-      await fetch('https://api.pinterest.com/v5/oauth/token', {
+      await fetch('https://api-sandbox.pinterest.com/v5/oauth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -126,8 +129,9 @@ export class PinterestProvider
 
     this.checkScopes(this.scopes, scope);
 
+    console.log('[Pinterest] Getting authenticated user account from sandbox');
     const { id, profile_image, username } = await (
-      await fetch('https://api.pinterest.com/v5/user_account', {
+      await fetch('https://api-sandbox.pinterest.com/v5/user_account', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -147,8 +151,9 @@ export class PinterestProvider
   }
 
   async boards(accessToken: string) {
+    console.log('[Pinterest] Fetching boards from sandbox');
     const { items } = await (
-      await fetch('https://api.pinterest.com/v5/boards', {
+      await fetch('https://api-sandbox.pinterest.com/v5/boards', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -178,8 +183,9 @@ export class PinterestProvider
     );
 
     if (findMp4) {
+      console.log('[Pinterest] Uploading video media to sandbox');
       const { upload_url, media_id, upload_parameters } = await (
-        await this.fetch('https://api.pinterest.com/v5/media', {
+        await this.fetch('https://api-sandbox.pinterest.com/v5/media', {
           method: 'POST',
           body: JSON.stringify({
             media_type: 'video',
@@ -210,9 +216,10 @@ export class PinterestProvider
 
       let statusCode = '';
       while (statusCode !== 'succeeded') {
+        console.log('[Pinterest] Checking media upload status in sandbox');
         const mediafile = await (
           await this.fetch(
-            'https://api.pinterest.com/v5/media/' + media_id,
+            'https://api-sandbox.pinterest.com/v5/media/' + media_id,
             {
               method: 'GET',
               headers: {
@@ -236,8 +243,13 @@ export class PinterestProvider
       path: m.path,
     }));
 
+    console.log('[Pinterest] Creating pin in sandbox with data:', JSON.stringify({
+      description: postDetails?.[0]?.message,
+      board_id: postDetails?.[0]?.settings.board,
+      media_source: mediaId ? 'video' : 'image'
+    }));
     const { id: pId } = await (
-      await this.fetch('https://api.pinterest.com/v5/pins', {
+      await this.fetch('https://api-sandbox.pinterest.com/v5/pins', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -296,7 +308,7 @@ export class PinterestProvider
       all: { daily_metrics },
     } = await (
       await fetch(
-        `https://api.pinterest.com/v5/user_account/analytics?start_date=${since}&end_date=${until}`,
+        `https://api-sandbox.pinterest.com/v5/user_account/analytics?start_date=${since}&end_date=${until}`,
         {
           method: 'GET',
           headers: {
