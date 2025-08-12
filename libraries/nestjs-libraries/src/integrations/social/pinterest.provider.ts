@@ -153,7 +153,7 @@ export class PinterestProvider
   async boards(accessToken: string) {
     console.log('[Pinterest] Fetching boards from sandbox');
     const { items } = await (
-      await fetch('https://api-sandbox.pinterest.com/v5/boards', {
+      await fetch('https://api.pinterest.com/v5/boards', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
