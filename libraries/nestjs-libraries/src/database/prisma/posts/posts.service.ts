@@ -290,13 +290,18 @@ export class PostsService {
   }
 
   async post(id: string) {
+    console.log(`[PostsService] Starting post processing for id: ${id}`);
     const allPosts = await this.getPostsRecursively(id, true);
     const [firstPost, ...morePosts] = allPosts;
     if (!firstPost) {
+      console.log(`[PostsService] No firstPost found for id: ${id}`);
       return;
     }
 
+    console.log(`[PostsService] Found post for ${firstPost.integration?.providerIdentifier}, refreshNeeded: ${firstPost.integration?.refreshNeeded}, disabled: ${firstPost.integration?.disabled}`);
+
     if (firstPost.integration?.refreshNeeded) {
+      console.log(`[PostsService] Integration needs refresh for ${firstPost.integration?.providerIdentifier}`);
       await this._notificationService.inAppNotification(
         firstPost.organizationId,
         `We couldn't post to ${firstPost.integration?.providerIdentifier} for ${firstPost?.integration?.name}`,
@@ -307,6 +312,7 @@ export class PostsService {
     }
 
     if (firstPost.integration?.disabled) {
+      console.log(`[PostsService] Integration disabled for ${firstPost.integration?.providerIdentifier}`);
       await this._notificationService.inAppNotification(
         firstPost.organizationId,
         `We couldn't post to ${firstPost.integration?.providerIdentifier} for ${firstPost?.integration?.name}`,
@@ -317,10 +323,12 @@ export class PostsService {
     }
 
     try {
+      console.log(`[PostsService] Calling postSocial for ${firstPost.integration?.providerIdentifier}`);
       const finalPost = await this.postSocial(firstPost.integration!, [
         firstPost,
         ...morePosts,
       ]);
+      console.log(`[PostsService] PostSocial completed, result:`, finalPost);
 
       if (firstPost?.intervalInDays) {
         this._workerServiceProducer.emit('post', {

@@ -167,6 +167,14 @@ export class PinterestProvider
     accessToken: string,
     postDetails: PostDetails<PinterestSettingsDto>[]
   ): Promise<PostResponse[]> {
+    console.log(`[Pinterest] Starting post creation for id: ${id}`);
+    console.log(`[Pinterest] Post details:`, JSON.stringify({
+      message: postDetails?.[0]?.message,
+      board: postDetails?.[0]?.settings?.board,
+      mediaCount: postDetails?.[0]?.media?.length,
+      mediaTypes: postDetails?.[0]?.media?.map(m => m.path?.split('.').pop())
+    }));
+
     let mediaId = '';
     const findMp4 = postDetails?.[0]?.media?.find(
       (p) => (p.path?.indexOf('mp4') || -1) > -1
@@ -175,10 +183,12 @@ export class PinterestProvider
       (p) => (p.path?.indexOf('mp4') || -1) === -1
     );
 
+    console.log(`[Pinterest] Media analysis - hasVideo: ${!!findMp4}, hasImage: ${!!picture}`);
+
     if (findMp4) {
-      console.log('[Pinterest] Uploading video media to sandbox');
-      const { upload_url, media_id, upload_parameters } = await (
-        await this.fetch('https://api-sandbox.pinterest.com/v5/media', {
+      try {
+        console.log('[Pinterest] Uploading video media to sandbox');
+        const mediaResponse = await this.fetch('https://api-sandbox.pinterest.com/v5/media', {
           method: 'POST',
           body: JSON.stringify({
             media_type: 'video',
@@ -187,106 +197,149 @@ export class PinterestProvider
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
           },
-        })
-      ).json();
+        });
+        
+        const { upload_url, media_id, upload_parameters } = await mediaResponse.json();
+        console.log(`[Pinterest] Got media upload URL: ${upload_url}, media_id: ${media_id}`);
 
-      const { data, status } = await axios.get(
-        postDetails?.[0]?.media?.[0]?.path!,
-        {
-          responseType: 'stream',
-        }
-      );
+        console.log(`[Pinterest] Downloading video from: ${postDetails?.[0]?.media?.[0]?.path}`);
+        const { data, status } = await axios.get(
+          postDetails?.[0]?.media?.[0]?.path!,
+          {
+            responseType: 'stream',
+          }
+        );
+        console.log(`[Pinterest] Video download status: ${status}`);
 
-      const formData = Object.keys(upload_parameters)
-        .filter((f) => f)
-        .reduce((acc, key) => {
-          acc.append(key, upload_parameters[key]);
-          return acc;
-        }, new FormData());
+        const formData = Object.keys(upload_parameters)
+          .filter((f) => f)
+          .reduce((acc, key) => {
+            acc.append(key, upload_parameters[key]);
+            return acc;
+          }, new FormData());
 
-      formData.append('file', data);
-      await axios.post(upload_url, formData);
+        formData.append('file', data);
+        console.log(`[Pinterest] Uploading video to Pinterest`);
+        await axios.post(upload_url, formData);
+        console.log(`[Pinterest] Video upload completed`);
 
-      let statusCode = '';
-      while (statusCode !== 'succeeded') {
-        console.log('[Pinterest] Checking media upload status in sandbox');
-        const mediafile = await (
-          await this.fetch(
-            'https://api-sandbox.pinterest.com/v5/media/' + media_id,
-            {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
+        let statusCode = '';
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (statusCode !== 'succeeded' && attempts < maxAttempts) {
+          console.log(`[Pinterest] Checking media upload status (attempt ${attempts + 1}/${maxAttempts})`);
+          const mediafile = await (
+            await this.fetch(
+              'https://api-sandbox.pinterest.com/v5/media/' + media_id,
+              {
+                method: 'GET',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                },
               },
-            },
-            '',
-            0,
-            true
-          )
-        ).json();
+              '',
+              0,
+              true
+            )
+          ).json();
 
-        await timer(30000);
-        statusCode = mediafile.status;
+          statusCode = mediafile.status;
+          console.log(`[Pinterest] Media status: ${statusCode}`);
+          
+          if (statusCode !== 'succeeded') {
+            attempts++;
+            if (attempts < maxAttempts) {
+              console.log(`[Pinterest] Waiting 30 seconds before next check`);
+              await timer(30000);
+            }
+          }
+        }
+        
+        if (statusCode !== 'succeeded') {
+          throw new Error(`Video processing failed after ${maxAttempts} attempts. Last status: ${statusCode}`);
+        }
+
+        mediaId = media_id;
+        console.log(`[Pinterest] Video processing completed successfully, mediaId: ${mediaId}`);
+      } catch (error) {
+        console.error(`[Pinterest] Video upload failed:`, error);
+        throw error;
       }
-
-      mediaId = media_id;
     }
 
     const mapImages = postDetails?.[0]?.media?.map((m) => ({
       path: m.path,
     }));
+    console.log(`[Pinterest] Mapped images:`, mapImages);
 
-    console.log('[Pinterest] Creating pin in sandbox with data:', JSON.stringify({
+    const pinData = {
+      ...(postDetails?.[0]?.settings.link
+        ? { link: postDetails?.[0]?.settings.link }
+        : {}),
+      ...(postDetails?.[0]?.settings.title
+        ? { title: postDetails?.[0]?.settings.title }
+        : {}),
       description: postDetails?.[0]?.message,
+      ...(postDetails?.[0]?.settings.dominant_color
+        ? { dominant_color: postDetails?.[0]?.settings.dominant_color }
+        : {}),
       board_id: postDetails?.[0]?.settings.board,
-      media_source: mediaId ? 'video' : 'image'
-    }));
-    const { id: pId } = await (
-      await this.fetch('https://api-sandbox.pinterest.com/v5/pins', {
+      media_source: mediaId
+        ? {
+            source_type: 'video_id',
+            media_id: mediaId,
+            cover_image_url: picture?.path,
+          }
+        : mapImages?.length === 1
+        ? {
+            source_type: 'image_url',
+            url: mapImages?.[0]?.path,
+          }
+        : {
+            source_type: 'multiple_image_urls',
+            items: mapImages,
+          },
+    };
+
+    console.log('[Pinterest] Creating pin in sandbox with data:', JSON.stringify(pinData, null, 2));
+    
+    try {
+      const pinResponse = await this.fetch('https://api-sandbox.pinterest.com/v5/pins', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          ...(postDetails?.[0]?.settings.link
-            ? { link: postDetails?.[0]?.settings.link }
-            : {}),
-          ...(postDetails?.[0]?.settings.title
-            ? { title: postDetails?.[0]?.settings.title }
-            : {}),
-          description: postDetails?.[0]?.message,
-          ...(postDetails?.[0]?.settings.dominant_color
-            ? { dominant_color: postDetails?.[0]?.settings.dominant_color }
-            : {}),
-          board_id: postDetails?.[0]?.settings.board,
-          media_source: mediaId
-            ? {
-                source_type: 'video_id',
-                media_id: mediaId,
-                cover_image_url: picture?.path,
-              }
-            : mapImages?.length === 1
-            ? {
-                source_type: 'image_url',
-                url: mapImages?.[0]?.path,
-              }
-            : {
-                source_type: 'multiple_image_urls',
-                items: mapImages,
-              },
-        }),
-      })
-    ).json();
-
-    return [
-      {
-        id: postDetails?.[0]?.id,
-        postId: pId,
-        releaseURL: `https://www.pinterest.com/pin/${pId}`,
-        status: 'success',
-      },
-    ];
+        body: JSON.stringify(pinData),
+      });
+      
+      const responseData = await pinResponse.json();
+      console.log('[Pinterest] Pin creation response:', JSON.stringify(responseData, null, 2));
+      
+      const { id: pId } = responseData;
+      
+      if (!pId) {
+        console.error('[Pinterest] No pin ID returned from Pinterest API');
+        throw new Error('No pin ID returned from Pinterest API');
+      }
+      
+      const result = [
+        {
+          id: postDetails?.[0]?.id,
+          postId: pId,
+          releaseURL: `https://www.pinterest.com/pin/${pId}`,
+          status: 'success',
+        },
+      ];
+      
+      console.log('[Pinterest] Successfully created pin, returning result:', JSON.stringify(result, null, 2));
+      return result;
+      
+    } catch (error) {
+      console.error('[Pinterest] Pin creation failed:', error);
+      throw error;
+    }
   }
 
   async analytics(
